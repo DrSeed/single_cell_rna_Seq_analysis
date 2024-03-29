@@ -1,0 +1,381 @@
+---
+title: "SCRNA"
+author: "Saheed Adeyanju"
+date: "2023-08-16"
+output: html_document
+---
+
+
+```{r setup22, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+![SCRNA_seq_workflow](C:/Users/phili/OneDrive/Desktop/SCRNA_seq_workflow.png)
+
+
+
+# Download the dataset
+```{r n2, eval=T, include=T, warning=FALSE, echo=FALSE}
+# Install BiocMananger for installing the GEOquery package.
+if (!require("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+# Install the GEOquery Package
+BiocManager::install("GEOquery")
+```
+
+
+```{r n30000, eval=T, include=T, results='hide'}
+library(GEOquery)
+```
+
+
+
+# download the data from geo
+```{r n361, eval=T, include=T}
+gse_id <- "GSE138709"
+geo_object <- getGEO(gse_id)
+```
+
+```{r n4, eval=T, include=T}
+geo_object
+```
+
+
+```{r n5, eval=T, include=T, results='hide'}
+geo_object$`GSE138709-GPL20795_series_matrix.txt.gz`@experimentData
+
+
+
+```
+
+
+```{r n6, eval=T, include=T, results='hide'}
+metadata <- pData(geo_object[[1]])
+metadata
+```
+
+
+```{r n7, eval=T, include=T, include=FALSE}
+# Download the supplementary files for this GSE ID
+#getGEOSuppFiles(gse_id, makeDirectory = TRUE)
+
+```
+
+
+```{r n8, eval=T, include=T,results="hide"}
+head(metadata)
+str(metadata)
+summary(metadata)
+
+```
+
+
+```{r n9, eval=T, include=F, warning=FALSE, results='hide'}
+library(dplyr)
+library(Seurat)
+library(patchwork)
+```
+
+
+```{r n10, eval=T, include=T}
+data <- read.csv("./GSM4116579_ICC_18_Adjacent_UMI.csv.gz")
+
+```
+
+
+```{r n11, eval=T, include=F}
+file.exists("./GSM4116579_ICC_18_Adjacent_UMI.csv.gz")
+```
+
+
+```{r n12, eval=T, include=T, results='hide'}
+head(data)
+
+```
+
+
+```{r n13, eval=T, include=T, results='hide'}
+# renamig the indexes of the row of the table
+
+row.names(data) <- data[,1]
+head(data)
+
+
+```
+
+
+```{r n14, eval=T, include=T}
+
+dim(data)
+
+```
+
+
+```{r n15, eval=T, include=T, results='hide'}
+data <- data[,2:10318]
+head(data)
+```
+
+# creating seurat object
+```{r n16, eval=T, include=T, message=FALSE, warning=FALSE}
+seurat_obj <- CreateSeuratObject(counts = data, project = "test", min.cells = 3, min.features = 200 )
+```
+
+
+```{r n17, eval=T, include=F}
+rm(data)
+```
+
+
+```{r n18, eval=T, include=T}
+str(seurat_obj)
+```
+
+# Perform for Quality checks on the data matrix.
+```{r n1999, eval=T, include=T}
+# The [[ operator can add columns to object metadata. This is a great place to stash QC stats
+seurat_obj[["percent.mt"]] <- PercentageFeatureSet(seurat_obj, pattern = "^MT-")
+```
+
+
+```{r n19, eval=T, include=T}
+
+# Visualize QC percentage Mitochondrial counts metrics as a violin plot
+VlnPlot(seurat_obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+
+```
+
+
+```{r n20, eval=T, include=T}
+seurat_obj
+```
+
+
+```{r n21, eval=T, include=T}
+seurat_obj <- subset(seurat_obj, subset = nFeature_RNA > 200 & nFeature_RNA < 2500 & percent.mt < 5)
+seurat_obj
+```
+
+
+```{r n221, eval=T, include=T, results='hide'}
+str(seurat_obj)
+```
+
+```{r n2221, eval=T, include=T}
+
+# After removing unwanted cells from the dataset, the next step is to normalize the data. By default, we employ a global-scaling normalization method “LogNormalize” that normalizes the feature expression measurements for each cell by the total expression, multiplies this by a scale factor (10,000 by default), and log-transforms the result. Normalized values are stored in seurat_object[["RNA"]]@data
+
+
+
+seurat_obj <- NormalizeData(seurat_obj, normalization.method = "LogNormalize", scale.factor = 10000)
+```
+
+
+```{r n31, eval=T, include=T, results='hide'}
+seurat_obj@assays$RNA@data
+```
+
+
+```{r setup, include=FALSE}
+seurat_obj <- FindVariableFeatures(seurat_obj, selection.method = "vst", nfeatures = 2000)
+```
+
+
+```{r n51, eval=T, include=T}
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(seurat_obj), 10)
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(seurat_obj,)
+plot1
+```
+
+
+```{r n101, eval=T, include=T}
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot2
+```
+
+# Step 6: Scaling the data
+  # scaling is a standard pre-processing step prior to dimensional reduction techniques like PCA.
+
+    # Shifts the expression of each gene, so that the mean expression across cells is 0
+    # Scales the expression of each gene, so that the variance across cells is 1
+    # This step gives equal weight in downstream analyses, so that highly-expressed genes do not dominate
+
+
+```{r n4111, eval=T, include=T, results='hide'}
+all.genes <- rownames(seurat_obj)
+seurat_obj <- ScaleData(seurat_obj, features = all.genes)
+```
+
+# Step 7: Remove Unwanted sources of variation (Optional):
+
+```{r n32, eval=T, include=T, results='hide'}
+seurat_obj <- ScaleData(seurat_obj, vars.to.regress = "percent.mt")
+```
+
+
+```{r n33, eval=T, include=T}
+seurat_obj <- RunPCA(seurat_obj, features = VariableFeatures(object = seurat_obj))
+```
+
+
+```{r 34, eval=T, include=T}
+# Dimension Scatter Plot : Scatter plot between PC1 and PC2
+VizDimLoadings(seurat_obj, dims = 1:2, reduction = "pca")
+
+```
+
+
+```{r 35, eval=T, include=T}
+DimPlot(seurat_obj, reduction = "pca")
+```
+
+
+```{r n36, eval=T, include=T}
+
+DimHeatmap(seurat_obj, dims = 1, cells = 500, balanced = TRUE)
+
+```
+
+```{r setup44, include=FALSE}
+# NOTE: This process can take a long time for big datasets, comment out for expediency. More
+# approximate techniques such as those implemented in ElbowPlot() can be used to reduce
+# computation time
+#seurat_obj <- JackStraw(seurat_obj, num.replicate = 100)
+#seurat_obj <- ScoreJackStraw(seurat_obj, dims = 1:20
+                             
+```
+
+# Elbow plot
+```{r 37, eval=T, include=T}
+ElbowPlot(seurat_obj)
+```
+
+
+```{r 38, eval=T, include=T}
+VizDimLoadings(seurat_obj, dims = 1:2, reduction = "pca")
+```
+
+
+# Step 8: Cluster the cells:
+
+```{r n42, eval=T, include=T}
+seurat_obj <- FindNeighbors(seurat_obj, dims = 1:10)
+seurat_obj <- FindClusters(seurat_obj, resolution = 0.5)
+```
+
+
+```{r n43, eval=T, include=T}
+head(Idents(seurat_obj), 5)
+```
+
+
+# Step 9: Non-Linear Dimensional Reduction (UMAP/tSNE):
+```{r n44, eval=T, include=T}
+seurat_obj <- RunUMAP(seurat_obj, dims = 1:10)
+```
+# Non-Linear Dimensional Reduction (UMAP/tSNE):
+
+```{r 46665, eval=T, include=T}
+# note that you can set `label = TRUE` or use the LabelClusters function to help label
+# individual clusters
+DimPlot(seurat_obj, reduction = "umap",label = TRUE)
+```
+
+# Step :10 Finding differentially expressed gene in each cluster (cluster biomarkers):
+```{r 46, eval=T, include=T, results='hide'}
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+seurat_obj.markers <- FindAllMarkers(seurat_obj, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+```
+
+
+
+```{r 476, eval=T, include=T}
+# find markers for every cluster compared to all remaining cells, report only the positive ones
+seurat_obj.markers %>% group_by(cluster) %>% slice_max(n = 2, order_by = avg_log2FC)
+```
+
+
+
+```{r 47, eval=T, include=T}
+FeaturePlot(seurat_obj, features = c('CD79A', 'FXYD2', 'CD1C', 'ENG', 'ACTA2', 'APOC3',
+                'CD14', 'KRT19', 'KLRF1', 'CD3D'))
+```
+
+
+```{r 48, eval=T, include=T}
+marker_genes = c('CD79A', 'FXYD2', 'CD1C', 'ENG', 'ACTA2', 'APOC3',
+                'CD14', 'KRT19', 'KLRF1', 'CD3D')
+```
+
+
+
+```{r 49, eval=T, include=T}
+VlnPlot(object = seurat_obj, features = marker_genes, group.by = "seurat_clusters")
+```
+
+
+
+```{r 50, eval=T, include=T}
+VlnPlot(seurat_obj, features = c("ENG", "CD79A"))
+```
+
+
+
+```{r 45, eval=T, include=T}
+
+
+DotPlot(seurat_obj, features = marker_genes) + RotatedAxis()
+
+
+```
+
+
+
+```{r n57, eval=T, include=T}
+cluster.identity = c('0'='A',
+    '1' = 'B',
+    '2' = 'C',
+    '3' = 'D',
+    '4' = 'E',
+    '5' = 'F',
+    '6' = 'G',
+    '7' = 'H',
+    '8' = 'I',
+    '9' = 'J',
+    '10' = 'K',
+    '11' = 'L',
+    '12' = 'M',
+    '13' = 'N'
+)
+```
+
+
+
+```{r n58, eval=T, include=T}
+cluster.identity
+```
+
+
+```{r 59, eval=T, include=T}
+seurat_obj <- RenameIdents(seurat_obj, cluster.identity)
+DimPlot(seurat_obj, reduction = "umap", label = TRUE, pt.size = 0.5)
+```
+
+
+```{r 65, eval=T, include=T}
+# Find markers between two clusters
+markers_A_B <- FindMarkers(seurat_obj, ident.1 = "A", ident.2 = "B")
+
+# View the top 10 markers
+head(markers_A_B, n = 10)
+```
+
+
+```{r pressure, echo=FALSE}
+
+```
+
+
